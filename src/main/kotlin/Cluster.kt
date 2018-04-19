@@ -1,3 +1,4 @@
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import java.net.ServerSocket
 import java.net.Socket
@@ -5,6 +6,8 @@ import java.util.*
 import java.util.concurrent.ArrayBlockingQueue
 import kotlin.concurrent.thread
 
+
+private val mapper = jacksonObjectMapper()
 
 class Cluster(
         private val thisNodeId: NodeId,
