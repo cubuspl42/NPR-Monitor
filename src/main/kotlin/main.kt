@@ -25,9 +25,9 @@ enum class MessageType {
 @Serializable
 data class Message(
         val type: MessageType,
-        val timestamp: Int,
-        val nodeId: NodeId,
-        val conditionId: Int = 0
+        val timestamp: Int = -1,
+        val nodeId: NodeId = -1,
+        val conditionId: Int = -1
 )
 
 data class Request(
@@ -56,6 +56,8 @@ class Cluster(
 ) {
     private val messageQueue = ArrayBlockingQueue<Message>(8)
 
+    private var time = 0
+
     init {
         if (thisNodeId !in nodeAddresses.indices) throw AssertionError()
 
@@ -76,7 +78,7 @@ class Cluster(
             println("Receiving loop...")
             while (true) {
                 val message = messageQueue.take()
-                distributedLock.handleMessage(message)
+                handleMessage(message)
             }
         }
     }
@@ -84,7 +86,7 @@ class Cluster(
 
     internal fun send(nodeId: NodeId, message: Message) {
         if (nodeId == thisNodeId) {
-            distributedLock.handleMessage(message)
+            handleMessage(message)
         } else {
             val socket = socketMap[nodeId]!!
             send(socket, message)
@@ -92,16 +94,22 @@ class Cluster(
     }
 
     internal fun broadcast(message: Message) {
-        distributedLock.handleMessage(message)
+        handleMessage(message)
         socketMap.values.forEach { socket ->
             send(socket, message)
         }
     }
 
+    private fun handleMessage(message: Message) {
+        time = Math.max(time, message.timestamp) + 1
+        distributedLock.handleMessage(message)
+    }
+
     private fun send(socket: Socket, message: Message) {
-        println("Sending message to ${socket.remoteSocketAddress}: $message")
+        val filledMessage = message.copy(timestamp = ++time, nodeId = thisNodeId)
+        println("Sending message to ${socket.remoteSocketAddress}: $filledMessage")
         socket.getOutputStream().run {
-            write(mapper.writeValueAsBytes(message))
+            write(mapper.writeValueAsBytes(filledMessage))
             write("\n".toByteArray())
         }
     }
@@ -160,8 +168,6 @@ class DistributedLock(
 ) {
     private val cluster = Cluster(thisNodeId, this)
 
-    private var time = 0
-
     private val semaphore = Semaphore(0)
 
     private val queue: Queue<Request> = PriorityQueue()
@@ -177,7 +183,7 @@ class DistributedLock(
 
     @Synchronized
     fun release() {
-        cluster.broadcast(Message(RELEASE, ++time, thisNodeId))
+        cluster.broadcast(Message(RELEASE))
     }
 
     internal fun sleep() {
@@ -192,19 +198,17 @@ class DistributedLock(
     @Synchronized
     private fun requestLock() {
         responsesNeeded = cluster.size
-        cluster.broadcast(Message(REQUEST, ++time, thisNodeId))
+        cluster.broadcast(Message(REQUEST))
     }
 
     @Synchronized
     internal fun handleMessage(message: Message) {
         println("Received message: $message")
 
-        time = Math.max(time, message.timestamp) + 1
-
         when (message.type) {
             REQUEST -> {
                 queue.add(Request(message.timestamp, message.nodeId))
-                cluster.send(message.nodeId, Message(RESPONSE, ++time, thisNodeId))
+                cluster.send(message.nodeId, Message(RESPONSE))
             }
             RESPONSE -> {
                 if (responsesNeeded <= 0) throw AssertionError()
@@ -252,12 +256,12 @@ class DistributedCondition(
     internal val queue: Queue<Request> = PriorityQueue()
 
     fun wait_() {
-        cluster.broadcast(Message(WAIT, -1, -1, conditionId))
+        cluster.broadcast(Message(WAIT, conditionId = conditionId))
         distributedLock.sleep()
     }
 
     fun notify_() {
-        cluster.broadcast(Message(NOTIFY, -1, -1, conditionId))
+        cluster.broadcast(Message(NOTIFY, conditionId = conditionId))
     }
 }
 
