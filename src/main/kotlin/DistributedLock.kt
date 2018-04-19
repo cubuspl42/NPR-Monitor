@@ -1,5 +1,4 @@
 import java.util.*
-import java.util.concurrent.Semaphore
 
 
 class DistributedLock(
@@ -7,7 +6,7 @@ class DistributedLock(
 ) {
     private val cluster = Cluster(thisNodeId, this)
 
-    private val semaphore = Semaphore(0)
+    private val semaphore = BinarySemaphore()
 
     private val queue: Queue<Request> = PriorityQueue()
 
@@ -17,7 +16,7 @@ class DistributedLock(
 
     fun acquire() {
         requestLock()
-        sleep()
+        semaphore.await()
     }
 
     @Synchronized
@@ -25,13 +24,11 @@ class DistributedLock(
         cluster.broadcast(Message(MessageType.RELEASE))
     }
 
-    internal fun sleep() {
-        semaphore.acquire()
-    }
-
-    private fun wakeup() {
-        if (semaphore.availablePermits() != 0) throw AssertionError()
-        semaphore.release()
+    fun newCondition(): DistributedCondition {
+        val conditionId = conditions.size
+        return DistributedCondition(cluster, semaphore, conditionId).also {
+            conditions.add(it)
+        }
     }
 
     @Synchronized
@@ -82,7 +79,7 @@ class DistributedLock(
 
     private fun tryEnteringCriticalSection() {
         if (queue.firstOrNull()?.nodeId == thisNodeId) {
-            wakeup()
+            semaphore.signal()
         }
     }
 }

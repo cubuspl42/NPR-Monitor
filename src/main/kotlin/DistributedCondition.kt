@@ -2,15 +2,15 @@ import java.util.*
 
 
 class DistributedCondition(
-        private val distributedLock: DistributedLock,
-        private val conditionId: Int,
-        private val cluster: Cluster
+        private val cluster: Cluster,
+        private val semaphore: BinarySemaphore,
+        private val conditionId: Int
 ) {
     internal val queue: Queue<Request> = PriorityQueue()
 
     fun await() {
         cluster.broadcast(Message(MessageType.WAIT, conditionId = conditionId))
-        distributedLock.sleep()
+        semaphore.await()
     }
 
     fun signal() {
