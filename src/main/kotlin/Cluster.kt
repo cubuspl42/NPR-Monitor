@@ -1,3 +1,4 @@
+import MessageType.*
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import java.net.ServerSocket
@@ -9,6 +10,8 @@ import kotlin.concurrent.thread
 
 private val mapper = jacksonObjectMapper()
 
+private const val MAX_QUEUE_SIZE = 10
+
 class Cluster(
         private val thisNodeId: NodeId,
         private val distributedLock: DistributedLock,
@@ -16,7 +19,10 @@ class Cluster(
 ) {
     private val messageQueue = ArrayBlockingQueue<Message>(8)
 
-    private var time = 0
+    var time = 0
+        private set
+
+    val distributedQueue = DistributedQueue<Int>(this, MAX_QUEUE_SIZE, Int::class.java)
 
     init {
         if (thisNodeId !in nodeAddresses.indices) throw AssertionError()
@@ -44,28 +50,29 @@ class Cluster(
     }
 
     internal fun send(nodeId: NodeId, message: Message) {
-        if (nodeId == thisNodeId) {
-            handleMessage(message)
-        } else {
-            val socket = socketMap[nodeId]!!
-            send(socket, message)
-        }
+        ++time
+        val socket = socketMap[nodeId]!!
+        send(socket, message, time)
     }
 
     internal fun broadcast(message: Message) {
-        handleMessage(message)
+        ++time
         socketMap.values.forEach { socket ->
-            send(socket, message)
+            send(socket, message, time)
         }
     }
 
     private fun handleMessage(message: Message) {
+        println("Received message: $message")
         time = Math.max(time, message.timestamp) + 1
-        distributedLock.handleMessage(message)
+        when {
+            message.type in setOf(PUSH, POP) -> distributedQueue.handleMessage(message)
+            else -> distributedLock.handleMessage(message)
+        }
     }
 
-    private fun send(socket: Socket, message: Message) {
-        val filledMessage = message.copy(timestamp = ++time, nodeId = thisNodeId)
+    private fun send(socket: Socket, message: Message, timestamp: Int) {
+        val filledMessage = message.copy(timestamp = timestamp, nodeId = thisNodeId)
         println("Sending message to ${socket.remoteSocketAddress}: $filledMessage")
         socket.getOutputStream().run {
             write(mapper.writeValueAsBytes(filledMessage))

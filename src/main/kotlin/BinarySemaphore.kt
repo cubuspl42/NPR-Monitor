@@ -8,7 +8,8 @@ class BinarySemaphore {
     }
 
     fun signal() {
-        if (semaphore.availablePermits() != 0) throw AssertionError()
+        val availablePermits = semaphore.availablePermits()
+        if (availablePermits != 0) throw AssertionError()
         semaphore.release()
     }
 }

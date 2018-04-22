@@ -2,9 +2,11 @@ import java.util.*
 
 
 class DistributedLock(
-        private val thisNodeId: NodeId
+        internal val thisNodeId: NodeId
 ) {
     private val cluster = Cluster(thisNodeId, this)
+
+    val distributedQueue = cluster.distributedQueue
 
     private val semaphore = BinarySemaphore()
 
@@ -17,30 +19,32 @@ class DistributedLock(
     fun acquire() {
         requestLock()
         semaphore.await()
+        println("Lock acquired")
     }
 
     @Synchronized
     fun release() {
+        onRelease()
         cluster.broadcast(Message(MessageType.RELEASE))
+        println("Lock released")
     }
 
     fun newCondition(): DistributedCondition {
         val conditionId = conditions.size
-        return DistributedCondition(cluster, semaphore, conditionId).also {
+        return DistributedCondition(cluster, this, semaphore, conditionId).also {
             conditions.add(it)
         }
     }
 
     @Synchronized
     private fun requestLock() {
-        responsesNeeded = cluster.size
+        responsesNeeded = cluster.size - 1
+        queue.add(Request(cluster.time + 1, thisNodeId))
         cluster.broadcast(Message(MessageType.REQUEST))
     }
 
     @Synchronized
     internal fun handleMessage(message: Message) {
-        println("Received message: $message")
-
         when (message.type) {
             MessageType.REQUEST -> {
                 queue.add(Request(message.timestamp, message.nodeId))
@@ -55,31 +59,38 @@ class DistributedLock(
                 }
             }
             MessageType.RELEASE -> {
-                onRelease(message)
+                onRelease(message.nodeId)
             }
             MessageType.WAIT -> {
                 conditions[message.conditionId].queue.add(Request(message.timestamp, message.nodeId))
-                onRelease(message)
+                onRelease(message.nodeId)
             }
             MessageType.NOTIFY -> {
-                if (queue.firstOrNull()?.nodeId != message.nodeId) throw AssertionError()
-                val request = conditions[message.conditionId].queue.poll()
-                queue.add(request)
+                // TODO: Queue notify requests
+                conditions[message.conditionId].queue.poll()?.let { queue.add(it) }
             }
+            else -> throw AssertionError()
         }
 
         println("Queue: $queue")
     }
 
-    private fun onRelease(message: Message) {
-        if (queue.firstOrNull()?.nodeId != message.nodeId) throw AssertionError()
-        queue.remove()
+    internal fun onRelease() {
+        onRelease(thisNodeId)
+        if (queue.any { it.nodeId == thisNodeId }) throw AssertionError()
+    }
+
+    private fun onRelease(nodeId: NodeId) {
+        if (!queue.any { it.nodeId == nodeId }) throw AssertionError()
+        queue.removeIf { it.nodeId == nodeId }
         tryEnteringCriticalSection()
     }
 
     private fun tryEnteringCriticalSection() {
-        if (queue.firstOrNull()?.nodeId == thisNodeId) {
-            semaphore.signal()
+        if (queue.firstOrNull()?.nodeId == thisNodeId && responsesNeeded == 0) {
+            enterCriticalSection()
         }
     }
+
+    private fun enterCriticalSection() = semaphore.signal()
 }
