@@ -17,13 +17,16 @@ class DistributedLock(
     private var responsesNeeded = 0
 
     fun acquire() {
-        requestLock()
+        cluster.synchronized {
+            responsesNeeded = cluster.size - 1
+            queue.add(Request(cluster.time + 1, thisNodeId))
+            cluster.broadcast(Message(MessageType.REQUEST))
+        }
         semaphore.await()
         println("Lock acquired")
     }
 
-    @Synchronized
-    fun release() {
+    fun release() = cluster.synchronized {
         onRelease()
         cluster.broadcast(Message(MessageType.RELEASE))
         println("Lock released")
@@ -36,14 +39,6 @@ class DistributedLock(
         }
     }
 
-    @Synchronized
-    private fun requestLock() {
-        responsesNeeded = cluster.size - 1
-        queue.add(Request(cluster.time + 1, thisNodeId))
-        cluster.broadcast(Message(MessageType.REQUEST))
-    }
-
-    @Synchronized
     internal fun handleMessage(message: Message) {
         when (message.type) {
             MessageType.REQUEST -> {
@@ -62,12 +57,11 @@ class DistributedLock(
                 onRelease(message.nodeId)
             }
             MessageType.WAIT -> {
-                conditions[message.conditionId].queue.add(Request(message.timestamp, message.nodeId))
+                conditions[message.conditionId].waitQueue.add(Request(message.timestamp, message.nodeId))
                 onRelease(message.nodeId)
             }
             MessageType.NOTIFY -> {
-                // TODO: Queue notify requests
-                conditions[message.conditionId].queue.poll()?.let { queue.add(it) }
+                conditions[message.conditionId].notifyQueue.add(Request(message.timestamp, message.nodeId))
             }
             else -> throw AssertionError()
         }
@@ -81,9 +75,30 @@ class DistributedLock(
     }
 
     private fun onRelease(nodeId: NodeId) {
-        if (!queue.any { it.nodeId == nodeId }) throw AssertionError()
-        queue.removeIf { it.nodeId == nodeId }
+        if (queue.firstOrNull()?.nodeId == nodeId) {
+            val request = queue.remove()
+            processNotifyRequests(request.timestamp)
+        } else {
+            if (queue.none { it.nodeId == nodeId }) throw AssertionError()
+            queue.removeIf { it.nodeId == nodeId }
+        }
+
         tryEnteringCriticalSection()
+    }
+
+    private fun processNotifyRequests(timestamp: Int) {
+        println("Processing NOTIFY requests...")
+        for (condition in conditions) {
+            val notifyQueue = condition.notifyQueue
+            while (notifyQueue.isNotEmpty() && notifyQueue.first().timestamp < timestamp) {
+                val notifyRequest = notifyQueue.remove()
+                println("Processing NOTIFY request: $notifyRequest")
+                condition.waitQueue.poll()?.let { waitRequest ->
+                    println("Pushing WAIT request to queue: $waitRequest")
+                    queue.add(Request(notifyRequest.timestamp, waitRequest.nodeId))
+                }
+            }
+        }
     }
 
     private fun tryEnteringCriticalSection() {

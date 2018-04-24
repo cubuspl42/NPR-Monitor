@@ -1,21 +1,19 @@
-import MessageType.*
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
+import MessageType.POP
+import MessageType.PUSH
 import java.net.ServerSocket
 import java.net.Socket
-import java.util.*
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
+import kotlin.concurrent.withLock
 
-
-private val mapper = jacksonObjectMapper()
 
 private const val MAX_QUEUE_SIZE = 10
 
 class Cluster(
         private val thisNodeId: NodeId,
         private val distributedLock: DistributedLock,
-        private val socketMap: Map<NodeId, Socket>
+        private val socketMap: Map<NodeId, MessageSocket>
 ) {
     private val messageQueue = ArrayBlockingQueue<Message>(8)
 
@@ -24,18 +22,15 @@ class Cluster(
 
     val distributedQueue = DistributedQueue<Int>(this, MAX_QUEUE_SIZE, Int::class.java)
 
+    private val lock = ReentrantLock()
+
     init {
         if (thisNodeId !in nodeAddresses.indices) throw AssertionError()
 
         socketMap.values.map { socket ->
             thread {
-                val scanner = Scanner(socket.getInputStream()).apply {
-                    useDelimiter("\n")
-                }
                 while (true) {
-                    val messageString = scanner.next()
-                    val message = mapper.readValue<Message>(messageString)
-                    messageQueue.put(message)
+                    messageQueue.put(socket.receive())
                 }
             }
         }
@@ -49,20 +44,22 @@ class Cluster(
         }
     }
 
+    internal fun <T> synchronized(action: () -> T) = lock.withLock(action)
+
     internal fun send(nodeId: NodeId, message: Message) {
         ++time
         val socket = socketMap[nodeId]!!
-        send(socket, message, time)
+        send(nodeId, socket, message, time)
     }
 
     internal fun broadcast(message: Message) {
         ++time
-        socketMap.values.forEach { socket ->
-            send(socket, message, time)
+        socketMap.forEach { (nodeId, socket) ->
+            send(nodeId, socket, message, time)
         }
     }
 
-    private fun handleMessage(message: Message) {
+    private fun handleMessage(message: Message) = synchronized {
         println("Received message: $message")
         time = Math.max(time, message.timestamp) + 1
         when {
@@ -71,13 +68,10 @@ class Cluster(
         }
     }
 
-    private fun send(socket: Socket, message: Message, timestamp: Int) {
+    private fun send(nodeId: NodeId, socket: MessageSocket, message: Message, timestamp: Int) {
         val filledMessage = message.copy(timestamp = timestamp, nodeId = thisNodeId)
-        println("Sending message to ${socket.remoteSocketAddress}: $filledMessage")
-        socket.getOutputStream().run {
-            write(mapper.writeValueAsBytes(filledMessage))
-            write("\n".toByteArray())
-        }
+        println("Sending message to $nodeId: $filledMessage")
+        socket.send(filledMessage)
     }
 
     val size = nodeAddresses.size
@@ -118,12 +112,14 @@ fun Cluster(
 
     println("Bound address: ${serverSocket.localSocketAddress}")
 
-    val socketMap = buildSocketMap(thisNodeId, serverSocket)
+    val rawSocketMap = buildSocketMap(thisNodeId, serverSocket)
 
     println("Socket map:")
-    socketMap.forEach { nodeId, socket ->
+    rawSocketMap.forEach { nodeId, socket ->
         println("$nodeId: ${socket.localSocketAddress} -> ${socket.remoteSocketAddress}")
     }
+
+    val socketMap = rawSocketMap.mapValues { MessageSocket(it.value) }
 
     return Cluster(thisNodeId, distributedLock, socketMap)
 }

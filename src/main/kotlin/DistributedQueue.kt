@@ -1,4 +1,5 @@
-import MessageType.*
+import MessageType.POP
+import MessageType.PUSH
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.util.*
 
@@ -29,13 +30,14 @@ class DistributedQueue<T>(
     fun isFull() = queue.size == maxSize
 
     internal fun handleMessage(message: Message) {
+        // FIXME: PUSH order
         when (message.type) {
             PUSH -> {
                 val element = mapper.readValue<T>(message.value, valueType)
                 queue.add(element)
             }
             POP -> {
-
+                queue.remove()
             }
             else -> throw AssertionError()
         }
