@@ -1,5 +1,4 @@
-import MessageType.POP
-import MessageType.PUSH
+import MessageType.*
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
@@ -24,6 +23,10 @@ class Cluster(
 
     internal val lock = ReentrantLock()
 
+    private var responsesNeeded = 0
+
+    private val allResponsesReceivedCond = lock.newCondition()
+
     init {
         if (thisNodeId !in nodeAddresses.indices) throw AssertionError()
 
@@ -39,39 +42,70 @@ class Cluster(
             println("Receiving loop...")
             while (true) {
                 val message = messageQueue.take()
-                handleMessage(message)
+                receiveMessage(message)
             }
         }
     }
 
     internal fun <T> synchronized(action: () -> T) = lock.withLock(action)
 
-    internal fun send(nodeId: NodeId, message: Message) {
+    private fun send(nodeId: NodeId, message: Message) {
         ++time
+        val filledMessage = message.copy(timestamp = time, nodeId = thisNodeId)
         val socket = socketMap[nodeId]!!
-        send(nodeId, socket, message, time)
+        send(nodeId, socket, filledMessage, time)
     }
 
     internal fun broadcast(message: Message) {
         ++time
+        val filledMessage = message.copy(timestamp = time, nodeId = thisNodeId)
         socketMap.forEach { (nodeId, socket) ->
-            send(nodeId, socket, message, time)
+            send(nodeId, socket, filledMessage, time)
+        }
+        if (message.type.enableLoopback) {
+            handleMessage(filledMessage)
+        }
+        if (message.type.requiresResponse) {
+            waitForResponses()
         }
     }
 
-    private fun handleMessage(message: Message) = synchronized {
+    private fun waitForResponses() {
+        responsesNeeded = size - 1
+        while (responsesNeeded != 0) {
+            allResponsesReceivedCond.await()
+        }
+    }
+
+    private fun receiveMessage(message: Message) = synchronized {
         println("Received message: $message")
         time = Math.max(time, message.timestamp) + 1
+        handleMessage(message)
+        if (message.type.requiresResponse) {
+            send(message.nodeId, Message(RESPONSE))
+        }
+    }
+
+    private fun handleMessage(message: Message) {
         when {
+            message.type == RESPONSE -> handleResponse()
             message.type in setOf(PUSH, POP) -> distributedQueue.handleMessage(message)
             else -> distributedLock.handleMessage(message)
         }
     }
 
+    private fun handleResponse() {
+        if (responsesNeeded <= 0) throw AssertionError()
+
+        --responsesNeeded
+        if (responsesNeeded == 0) {
+            allResponsesReceivedCond.signal()
+        }
+    }
+
     private fun send(nodeId: NodeId, socket: MessageSocket, message: Message, timestamp: Int) {
-        val filledMessage = message.copy(timestamp = timestamp, nodeId = thisNodeId)
-        println("Sending message to $nodeId: $filledMessage")
-        socket.send(filledMessage)
+        println("Sending message to $nodeId: $message")
+        socket.send(message)
     }
 
     val size = nodeAddresses.size

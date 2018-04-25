@@ -1,11 +1,14 @@
 typealias NodeId = Int
 
-enum class MessageType {
-    REQUEST,
+enum class MessageType(
+        val requiresResponse: Boolean = false,
+        val enableLoopback: Boolean = false
+) {
+    REQUEST(requiresResponse = true, enableLoopback = true),
     RESPONSE,
-    RELEASE,
-    WAIT,
-    NOTIFY,
+    RELEASE(enableLoopback = true),
+    WAIT(requiresResponse = true, enableLoopback = true),
+    NOTIFY(requiresResponse = true, enableLoopback = true),
     PUSH,
     POP
 }
