@@ -84,8 +84,8 @@ fun main(args: Array<String>) {
 
     val p = ProducerConsumer(thisNodeId)
 
-    when (rand(0..1)) {
-        0 -> {
+    when {
+        thisNodeId < 2 -> {
             while (true) {
                 sleep(1000..5000)
                 val value = rand(0..100)

@@ -22,7 +22,7 @@ class Cluster(
 
     val distributedQueue = DistributedQueue<Int>(this, MAX_QUEUE_SIZE, Int::class.java)
 
-    private val lock = ReentrantLock()
+    internal val lock = ReentrantLock()
 
     init {
         if (thisNodeId !in nodeAddresses.indices) throw AssertionError()
