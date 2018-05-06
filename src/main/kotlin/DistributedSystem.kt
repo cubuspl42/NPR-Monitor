@@ -1,11 +1,15 @@
+import java.net.InetSocketAddress
 import kotlin.concurrent.thread
 
-class DistributedSystem(thisNodeId: NodeId) {
-    private val clusterSocket = Cluster(thisNodeId)
+
+private const val MAX_QUEUE_SIZE = 10
+
+class DistributedSystem(thisNodeId: NodeId, tcpClusterConfig: List<InetSocketAddress>) {
+    private val clusterSocket = tcpClusterSocket(thisNodeId, tcpClusterConfig)
 
     val distributedLock = DistributedLock(clusterSocket, thisNodeId)
 
-    val distributedQueue = DistributedQueue(clusterSocket, 10, Int::class.java)
+    val distributedQueue = DistributedQueue(clusterSocket, MAX_QUEUE_SIZE, Int::class.java)
 
     init {
         thread {

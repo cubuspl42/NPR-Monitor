@@ -2,7 +2,7 @@ import java.net.InetSocketAddress
 import java.util.concurrent.ThreadLocalRandom
 
 
-val nodeAddresses = listOf(
+private val tcpClusterConfig = listOf(
         InetSocketAddress("localhost", 5555),
         InetSocketAddress("localhost", 5556),
         InetSocketAddress("localhost", 5557),
@@ -22,7 +22,7 @@ fun sleep(range: ClosedRange<Int>) {
 }
 
 class ProducerConsumer(thisNodeId: NodeId) {
-    private val distributedSystem = DistributedSystem(thisNodeId)
+    private val distributedSystem = DistributedSystem(thisNodeId, tcpClusterConfig)
 
     private val lock = distributedSystem.distributedLock
 

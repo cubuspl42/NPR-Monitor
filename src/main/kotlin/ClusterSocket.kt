@@ -1,13 +1,9 @@
 import MessageType.*
-import java.net.ServerSocket
-import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
 import kotlin.concurrent.withLock
 
-
-private const val MAX_QUEUE_SIZE = 10
 
 data class ClusterMessage(
         val timestamp: Int,
@@ -30,8 +26,6 @@ class ClusterSocket(
     private val allResponsesReceivedCond = lock.newCondition()
 
     init {
-        if (thisNodeId !in nodeAddresses.indices) throw AssertionError()
-
         socketMap.values.map { socket ->
             thread {
                 while (true) {
@@ -74,7 +68,7 @@ class ClusterSocket(
 
     private fun waitForResponses() {
         if (responsesNeeded != 0) throw AssertionError()
-        responsesNeeded = size - 1
+        responsesNeeded = clusterSize - 1
         while (responsesNeeded != 0) {
             allResponsesReceivedCond.await()
         }
@@ -109,49 +103,5 @@ class ClusterSocket(
         socket.send(message)
     }
 
-    private val size = nodeAddresses.size
-}
-
-private fun buildServerSocket(thisNodeId: NodeId): ServerSocket {
-    val port = nodeAddresses[thisNodeId].port
-    return ServerSocket(port)
-}
-
-private fun buildSocketMap(thisNodeId: NodeId, serverSocket: ServerSocket): Map<NodeId, Socket> {
-    val lowerNodesSockets = connectToNodes(thisNodeId)
-    val higherNodesSockets = acceptNodesConnections(thisNodeId, serverSocket)
-    return (lowerNodesSockets + higherNodesSockets).toMap()
-}
-
-private fun connectToNodes(thisNodeId: NodeId): List<Pair<NodeId, Socket>> =
-        (0 until thisNodeId).map { nodeId ->
-            val socketAddress = nodeAddresses[nodeId]
-            println("Connecting to $socketAddress...")
-            nodeId to Socket(socketAddress.address, socketAddress.port)
-        }
-
-private fun acceptNodesConnections(thisNodeId: NodeId, serverSocket: ServerSocket): List<Pair<NodeId, Socket>> =
-        (thisNodeId + 1 until nodeAddresses.size).map { nodeId ->
-            val socket = serverSocket.accept()
-
-            println("${socket.remoteSocketAddress} connected!")
-
-            nodeId to socket
-        }
-
-fun Cluster(thisNodeId: NodeId): ClusterSocket {
-    val serverSocket = buildServerSocket(thisNodeId)
-
-    println("Bound address: ${serverSocket.localSocketAddress}")
-
-    val rawSocketMap = buildSocketMap(thisNodeId, serverSocket)
-
-    println("Socket map:")
-    rawSocketMap.forEach { nodeId, socket ->
-        println("$nodeId: ${socket.localSocketAddress} -> ${socket.remoteSocketAddress}")
-    }
-
-    val socketMap = rawSocketMap.mapValues { MessageSocket(it.value) }
-
-    return ClusterSocket(thisNodeId, socketMap)
+    private val clusterSize = socketMap.size + 1
 }
