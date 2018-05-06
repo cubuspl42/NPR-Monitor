@@ -1,5 +1,7 @@
 import State.*
 import java.util.*
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 
 enum class State {
@@ -11,28 +13,29 @@ enum class State {
 }
 
 class DistributedLock(
-        internal val thisNodeId: NodeId
+        private val cluster: ClusterSocket,
+        private val thisNodeId: NodeId
 ) {
+    private val lock = ReentrantLock()
+
     private var state = RELEASED
-
-    private val cluster = Cluster(thisNodeId, this)
-
-    val distributedQueue = cluster.distributedQueue
 
     private val queue: Queue<Request> = PriorityQueue()
 
     private val conditions = mutableListOf<DistributedCondition>()
 
-    private val firstInQueueCond = cluster.lock.newCondition()
+    private val firstInQueueCond = lock.newCondition()
 
     fun acquire() {
-        cluster.synchronized {
+        lock.withLock {
             state = ACQUIRING_LOCK
-            cluster.broadcast(Message(MessageType.REQUEST))
+        }
+        cluster.broadcast(Message(MessageType.REQUEST))
+        lock.withLock {
             ensureFirstInQueue()
             state = INSIDE_CRITICAL_SECTION
+            println("Lock acquired")
         }
-        println("Lock acquired")
     }
 
     private fun ensureFirstInQueue() {
@@ -41,7 +44,7 @@ class DistributedLock(
         }
     }
 
-    fun release() = cluster.synchronized {
+    fun release() = lock.withLock {
         if (state != INSIDE_CRITICAL_SECTION) throw AssertionError()
         cluster.broadcast(Message(MessageType.RELEASE))
         println("Lock released")
@@ -55,30 +58,32 @@ class DistributedLock(
         }
     }
 
-    internal fun await() {
+    internal fun await() = lock.withLock {
         state = WAITING
         ensureFirstInQueue()
         state = INSIDE_CRITICAL_SECTION
     }
 
-    internal fun handleMessage(message: Message) {
-        when (message.type) {
+    internal fun handleMessage(message: ClusterMessage) = lock.withLock {
+        when (message.content.type) {
             MessageType.REQUEST -> {
                 queue.add(Request(message.timestamp, message.nodeId))
             }
             MessageType.RELEASE -> {
-//                if (state == INSIDE_CRITICAL_SECTION) throw AssertionError() // FIXME: loopback
+                if (state == INSIDE_CRITICAL_SECTION) throw AssertionError()
                 onRelease(message.nodeId)
             }
             MessageType.WAIT -> {
-//                if (state == INSIDE_CRITICAL_SECTION) throw AssertionError() // FIXME: loopback
-                val condition = conditions[message.conditionId]
+                if ((message.nodeId != thisNodeId && state == INSIDE_CRITICAL_SECTION) ||
+                        (message.nodeId == thisNodeId && state != INSIDE_CRITICAL_SECTION)) throw AssertionError()
+                val condition = conditions[message.content.conditionId]
                 condition.waitQueue.add(Request(message.timestamp, message.nodeId))
                 onRelease(message.nodeId)
             }
             MessageType.NOTIFY -> {
-//                if (state == INSIDE_CRITICAL_SECTION) throw AssertionError() // FIXME: loopback
-                val condition = conditions[message.conditionId]
+                if ((message.nodeId != thisNodeId && state == INSIDE_CRITICAL_SECTION) ||
+                        (message.nodeId == thisNodeId && state != INSIDE_CRITICAL_SECTION)) throw AssertionError()
+                val condition = conditions[message.content.conditionId]
                 condition.waitQueue.poll()?.let { waitRequest ->
                     queue.add(Request(message.timestamp, waitRequest.nodeId))
                 }

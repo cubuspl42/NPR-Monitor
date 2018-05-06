@@ -9,19 +9,21 @@ import kotlin.concurrent.withLock
 
 private const val MAX_QUEUE_SIZE = 10
 
-class Cluster(
+data class ClusterMessage(
+        val timestamp: Int,
+        val nodeId: NodeId,
+        val content: Message
+)
+
+class ClusterSocket(
         private val thisNodeId: NodeId,
-        private val distributedLock: DistributedLock,
         private val socketMap: Map<NodeId, MessageSocket>
 ) {
-    private val messageQueue = ArrayBlockingQueue<Message>(8)
+    private val messageQueue = ArrayBlockingQueue<ClusterMessage>(8)
 
-    var time = 0
-        private set
+    private var time = 0
 
-    val distributedQueue = DistributedQueue<Int>(this, MAX_QUEUE_SIZE, Int::class.java)
-
-    internal val lock = ReentrantLock()
+    private val lock = ReentrantLock()
 
     private var responsesNeeded = 0
 
@@ -33,37 +35,37 @@ class Cluster(
         socketMap.values.map { socket ->
             thread {
                 while (true) {
-                    messageQueue.put(socket.receive())
+                    val message = socket.receive()
+                    receiveMessage(message)
                 }
             }
         }
-
-        thread {
-            println("Receiving loop...")
-            while (true) {
-                val message = messageQueue.take()
-                receiveMessage(message)
-            }
-        }
     }
 
-    internal fun <T> synchronized(action: () -> T) = lock.withLock(action)
+    fun receive(): ClusterMessage {
+        while (true) {
+            val message = messageQueue.take()!!
+            if (message.content.type == RESPONSE) {
+                handleResponse()
+            } else return message
+        }
+    }
 
     private fun send(nodeId: NodeId, message: Message) {
         ++time
-        val filledMessage = message.copy(timestamp = time, nodeId = thisNodeId)
+        val filledMessage = ClusterMessage(time, thisNodeId, message)
         val socket = socketMap[nodeId]!!
-        send(nodeId, socket, filledMessage, time)
+        send(nodeId, socket, filledMessage)
     }
 
-    internal fun broadcast(message: Message) {
+    fun broadcast(message: Message) = lock.withLock {
         ++time
-        val filledMessage = message.copy(timestamp = time, nodeId = thisNodeId)
+        val filledMessage = ClusterMessage(time, thisNodeId, message)
         socketMap.forEach { (nodeId, socket) ->
-            send(nodeId, socket, filledMessage, time)
+            send(nodeId, socket, filledMessage)
         }
         if (message.type.enableLoopback) {
-            handleMessage(filledMessage)
+            enqueueMessage(filledMessage)
         }
         if (message.type.requiresResponse) {
             waitForResponses()
@@ -71,30 +73,29 @@ class Cluster(
     }
 
     private fun waitForResponses() {
+        if (responsesNeeded != 0) throw AssertionError()
         responsesNeeded = size - 1
         while (responsesNeeded != 0) {
             allResponsesReceivedCond.await()
         }
     }
 
-    private fun receiveMessage(message: Message) = synchronized {
+    private fun receiveMessage(message: ClusterMessage) = lock.withLock {
         println("Received message: $message")
         time = Math.max(time, message.timestamp) + 1
-        handleMessage(message)
-        if (message.type.requiresResponse) {
+
+        enqueueMessage(message)
+
+        if (message.content.type.requiresResponse) {
             send(message.nodeId, Message(RESPONSE))
         }
     }
 
-    private fun handleMessage(message: Message) {
-        when {
-            message.type == RESPONSE -> handleResponse()
-            message.type in setOf(PUSH, POP) -> distributedQueue.handleMessage(message)
-            else -> distributedLock.handleMessage(message)
-        }
+    private fun enqueueMessage(message: ClusterMessage) {
+        messageQueue.put(message)
     }
 
-    private fun handleResponse() {
+    private fun handleResponse() = lock.withLock {
         if (responsesNeeded <= 0) throw AssertionError()
 
         --responsesNeeded
@@ -103,12 +104,12 @@ class Cluster(
         }
     }
 
-    private fun send(nodeId: NodeId, socket: MessageSocket, message: Message, timestamp: Int) {
+    private fun send(nodeId: NodeId, socket: MessageSocket, message: ClusterMessage) {
         println("Sending message to $nodeId: $message")
         socket.send(message)
     }
 
-    val size = nodeAddresses.size
+    private val size = nodeAddresses.size
 }
 
 private fun buildServerSocket(thisNodeId: NodeId): ServerSocket {
@@ -138,10 +139,7 @@ private fun acceptNodesConnections(thisNodeId: NodeId, serverSocket: ServerSocke
             nodeId to socket
         }
 
-fun Cluster(
-        thisNodeId: NodeId,
-        distributedLock: DistributedLock
-): Cluster {
+fun Cluster(thisNodeId: NodeId): ClusterSocket {
     val serverSocket = buildServerSocket(thisNodeId)
 
     println("Bound address: ${serverSocket.localSocketAddress}")
@@ -155,5 +153,5 @@ fun Cluster(
 
     val socketMap = rawSocketMap.mapValues { MessageSocket(it.value) }
 
-    return Cluster(thisNodeId, distributedLock, socketMap)
+    return ClusterSocket(thisNodeId, socketMap)
 }

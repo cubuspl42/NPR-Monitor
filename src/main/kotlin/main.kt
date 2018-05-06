@@ -22,9 +22,11 @@ fun sleep(range: ClosedRange<Int>) {
 }
 
 class ProducerConsumer(thisNodeId: NodeId) {
-    private val lock = DistributedLock(thisNodeId)
+    private val distributedSystem = DistributedSystem(thisNodeId)
 
-    private val queue = lock.distributedQueue
+    private val lock = distributedSystem.distributedLock
+
+    private val queue = distributedSystem.distributedQueue
 
     private val queueNonFull = lock.newCondition()
 
