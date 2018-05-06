@@ -1,3 +1,5 @@
+package monitor
+
 typealias NodeId = Int
 
 enum class MessageType(

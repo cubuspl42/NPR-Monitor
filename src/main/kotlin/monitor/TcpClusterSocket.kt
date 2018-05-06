@@ -1,3 +1,5 @@
+package monitor
+
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -19,9 +21,7 @@ private fun connectToNodes(addresses: List<InetSocketAddress>): List<Pair<NodeId
 private fun acceptNodesConnections(nodeIdRange: IntRange, serverSocket: ServerSocket): List<Pair<NodeId, Socket>> =
         nodeIdRange.map { nodeId ->
             val socket = serverSocket.accept()
-
             println("${socket.remoteSocketAddress} connected!")
-
             nodeId to socket
         }
 

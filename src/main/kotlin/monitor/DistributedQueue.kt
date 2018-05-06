@@ -1,5 +1,7 @@
-import MessageType.POP
-import MessageType.PUSH
+package monitor
+
+import monitor.MessageType.POP
+import monitor.MessageType.PUSH
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.util.*
 
@@ -41,6 +43,6 @@ class DistributedQueue<T>(
             }
             else -> throw AssertionError()
         }
-        println("DistributedQueue: $queue")
+        println("monitor.DistributedQueue: $queue")
     }
 }

@@ -1,4 +1,6 @@
-import MessageType.*
+package monitor
+
+import monitor.MessageType.*
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread

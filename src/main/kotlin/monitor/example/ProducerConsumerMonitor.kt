@@ -1,3 +1,8 @@
+package monitor.example
+
+import monitor.DistributedSystem
+import monitor.NodeId
+import monitor.tcpClusterSocket
 import java.net.InetSocketAddress
 import java.util.concurrent.ThreadLocalRandom
 
@@ -9,20 +14,22 @@ private val tcpClusterConfig = listOf(
         InetSocketAddress("localhost", 5558)
 )
 
-fun rand(range: ClosedRange<Int>) =
+private fun rand(range: ClosedRange<Int>) =
         ThreadLocalRandom.current().nextInt(range.endInclusive - range.start + 1) + range.start
 
-fun sleep(millis: Int) {
+private fun sleep(millis: Int) {
     println("Sleeping for $millis...")
     Thread.sleep(millis.toLong())
 }
 
-fun sleep(range: ClosedRange<Int>) {
+private fun sleep(range: ClosedRange<Int>) {
     sleep(rand(range))
 }
 
-class ProducerConsumer(thisNodeId: NodeId) {
-    private val distributedSystem = DistributedSystem(thisNodeId, tcpClusterConfig)
+class ProducerConsumerMonitor(thisNodeId: NodeId) {
+    private val clusterSocket = tcpClusterSocket(thisNodeId, tcpClusterConfig)
+
+    private val distributedSystem = DistributedSystem(clusterSocket, thisNodeId)
 
     private val lock = distributedSystem.distributedLock
 
@@ -31,8 +38,6 @@ class ProducerConsumer(thisNodeId: NodeId) {
     private val queueNonFull = lock.newCondition()
 
     private val queueNonEmpty = lock.newCondition()
-
-    private fun p() = false
 
     fun produce(value: Int) {
         lock.acquire()
@@ -69,38 +74,19 @@ class ProducerConsumer(thisNodeId: NodeId) {
     }
 }
 
-fun main(args: Array<String>) {
-    val thisNodeId = args[0].toInt()
+fun producerThread(monitor: ProducerConsumerMonitor, iterationCount: Int) {
+    repeat(iterationCount) {
+        sleep(1000..5000)
+        val value = rand(0..100)
+        println("Producing value: $value")
+        monitor.produce(value)
+    }
+}
 
-//    val mutex = DistributedLock(thisNodeId)
-//    while (true) {
-//        sleep(1000..60000)
-//        println("About to acquire mutex...")
-//        mutex.acquire()
-//        println("Entered critical section!")
-//        sleep(1000..5000)
-//        println("About to release mutex...")
-//        mutex.release()
-//        println("Left critical section!")
-//    }
-
-    val p = ProducerConsumer(thisNodeId)
-
-    when {
-        thisNodeId < 2 -> {
-            while (true) {
-                sleep(1000..5000)
-                val value = rand(0..100)
-                println("Producing value: $value")
-                p.produce(value)
-            }
-        }
-        else -> {
-            while (true) {
-                sleep(1000..5000)
-                val value = p.consume()
-                println("Consumed value: $value")
-            }
-        }
+fun consumerThread(monitor: ProducerConsumerMonitor, iterationCount: Int) {
+    repeat(iterationCount) {
+        sleep(1000..5000)
+        val value = monitor.consume()
+        println("Consumed value: $value")
     }
 }

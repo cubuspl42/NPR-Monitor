@@ -1,4 +1,6 @@
-import State.*
+package monitor
+
+import monitor.State.*
 import java.util.*
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -9,7 +11,6 @@ enum class State {
     ACQUIRING_LOCK,
     INSIDE_CRITICAL_SECTION,
     WAITING
-
 }
 
 class DistributedLock(
@@ -96,7 +97,7 @@ class DistributedLock(
 
     private fun onRelease(nodeId: NodeId) {
         if (queue.firstOrNull()?.nodeId == nodeId) {
-            val request = queue.remove()
+            queue.remove()
         } else {
             if (queue.none { it.nodeId == nodeId }) throw AssertionError()
             queue.removeIf { it.nodeId == nodeId }
