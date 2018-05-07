@@ -28,10 +28,11 @@ class ClusterSocket(
     private val allResponsesReceivedCond = lock.newCondition()
 
     init {
-        socketMap.values.map { socket ->
+        socketMap.map { (nodeId, socket) ->
             thread {
                 while (true) {
                     val message = socket.receive()
+                    if (message.nodeId != nodeId) throw AssertionError()
                     receiveMessage(message)
                 }
             }
