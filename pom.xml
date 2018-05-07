@@ -9,7 +9,7 @@
     <version>1.0-SNAPSHOT</version>
 
     <properties>
-        <kotlin.version>1.2.31</kotlin.version>
+        <kotlin.version>1.2.41</kotlin.version>
         <coroutines.version>0.22.5</coroutines.version>
         <serialization.version>0.4.1</serialization.version>
         <junit5.version>5.0.3</junit5.version>
